@@ -123,12 +123,18 @@ def main():
     parser.add_argument("--batch_size", type=int, default=128)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--max_deg", type=float, default=5.0,
+                        help="drop laps whose absolute degradation target exceeds this many seconds (outlier filter)")
     args = parser.parse_args()
 
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
     df = pd.read_parquet(args.data)
+    if args.max_deg > 0:
+        before = len(df)
+        df = pd.DataFrame(df.loc[df["DegSec"].abs() <= args.max_deg])
+        print(f"outlier filter |DegSec| <= {args.max_deg}: kept {len(df)} of {before} rows")
     df = encode(df)
 
     train_pool = pd.DataFrame(df.loc[df["Year"] <= 2023])

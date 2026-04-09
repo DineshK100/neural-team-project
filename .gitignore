@@ -1,0 +1,17 @@
+# FastF1 download cache (large; rebuilds locally on first run)
+fastf1_cache/
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Smoke-test / scratch artifacts
+smoke.parquet
+
+# Logs
+*.log
+
+# Editor / OS junk
+.DS_Store
+.vscode/
+.idea/
