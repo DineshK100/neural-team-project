@@ -1,0 +1,6 @@
+fastf1>=3.3
+torch>=2.0
+numpy
+pandas
+pyarrow
+scikit-learn
