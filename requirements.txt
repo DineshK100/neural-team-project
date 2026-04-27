@@ -1,6 +1,7 @@
-fastf1>=3.3
-torch>=2.0
-numpy
-pandas
-pyarrow
-scikit-learn
+fastf1>=3.8
+torch>=2.5
+numpy>=1.26
+pandas>=2.2
+pyarrow>=18.0
+scikit-learn>=1.5
+matplotlib>=3.9
