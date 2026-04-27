@@ -31,8 +31,34 @@ def encode(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def make_windows(df: pd.DataFrame, scaler: StandardScaler | None = None, fit_scaler: bool = False):
-    feat_cols = NUMERIC_FEATURES + [f"is_{c}" for c in COMPOUNDS]
+def build_identity_vocab(df: pd.DataFrame):
+    drivers = sorted(df["Driver"].dropna().unique().tolist())
+    circuits = sorted(df["Circuit"].dropna().unique().tolist())
+    return drivers, circuits
+
+
+def add_identity_columns(df: pd.DataFrame, drivers, circuits) -> pd.DataFrame:
+    df = df.copy()
+    for d in drivers:
+        df[f"drv_{d}"] = (df["Driver"] == d).astype(float)
+    for c in circuits:
+        df[f"crc_{c}"] = (df["Circuit"] == c).astype(float)
+    return df
+
+
+def make_windows(
+    df: pd.DataFrame,
+    drivers,
+    circuits,
+    scaler: StandardScaler | None = None,
+    fit_scaler: bool = False,
+):
+    feat_cols = (
+        NUMERIC_FEATURES
+        + [f"is_{c}" for c in COMPOUNDS]
+        + [f"drv_{d}" for d in drivers]
+        + [f"crc_{c}" for c in circuits]
+    )
     X_list, y_list = [], []
     grouped = (
         df.sort_values(["Year", "Round", "Driver", "Stint", "LapNumber"])
@@ -123,19 +149,17 @@ def main():
     parser.add_argument("--batch_size", type=int, default=128)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--max_deg", type=float, default=5.0,
-                        help="drop laps whose absolute degradation target exceeds this many seconds (outlier filter)")
     args = parser.parse_args()
 
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
     df = pd.read_parquet(args.data)
-    if args.max_deg > 0:
-        before = len(df)
-        df = pd.DataFrame(df.loc[df["DegSec"].abs() <= args.max_deg])
-        print(f"outlier filter |DegSec| <= {args.max_deg}: kept {len(df)} of {before} rows")
     df = encode(df)
+
+    drivers, circuits = build_identity_vocab(df)
+    print(f"identity vocab: {len(drivers)} drivers, {len(circuits)} circuits")
+    df = add_identity_columns(df, drivers, circuits)
 
     train_pool = pd.DataFrame(df.loc[df["Year"] <= 2023])
     test_df = pd.DataFrame(df.loc[df["Year"] == 2024])
@@ -144,9 +168,9 @@ def main():
 
     train_df, val_df = chronological_split(train_pool, val_fraction=0.2)
 
-    X_tr, y_tr, scaler = make_windows(train_df, fit_scaler=True)
-    X_val, y_val, _ = make_windows(val_df, scaler=scaler)
-    X_te, y_te, _ = make_windows(test_df, scaler=scaler)
+    X_tr, y_tr, scaler = make_windows(train_df, drivers, circuits, fit_scaler=True)
+    X_val, y_val, _ = make_windows(val_df, drivers, circuits, scaler=scaler)
+    X_te, y_te, _ = make_windows(test_df, drivers, circuits, scaler=scaler)
 
     if X_tr is None or y_tr is None:
         raise RuntimeError("no training windows produced; need stints with at least 5 valid laps")
@@ -154,7 +178,8 @@ def main():
     print(
         f"windows -- train: {len(X_tr)}, "
         f"val: {0 if X_val is None else len(X_val)}, "
-        f"test: {0 if X_te is None else len(X_te)}"
+        f"test: {0 if X_te is None else len(X_te)} "
+        f"| feature_dim: {X_tr.shape[-1]}"
     )
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
