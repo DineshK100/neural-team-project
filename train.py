@@ -16,9 +16,14 @@ from sklearn.preprocessing import StandardScaler
 
 from model import LinearBaseline, LSTMRegressor  # type: ignore[import-not-found]
 
-WINDOW = 5
+WINDOW = 8
 COMPOUNDS = ["SOFT", "MEDIUM", "HARD"]
 NUMERIC_FEATURES = ["TyreLife", "AirTemp", "TrackTemp", "Humidity", "Rainfall"]
+STREET_CIRCUITS = {"Monaco", "Singapore", "Azerbaijan", "Saudi", "Miami", "Las Vegas"}
+
+
+def is_street(circuit: str) -> bool:
+    return any(kw in circuit for kw in STREET_CIRCUITS)
 
 
 def encode(df: pd.DataFrame) -> pd.DataFrame:
@@ -135,6 +140,53 @@ def evaluate(model, loader, device) -> dict:
     }
 
 
+def collect_window_meta(df: pd.DataFrame) -> pd.DataFrame:
+    rows = []
+    grouped = (
+        df.sort_values(["Year", "Round", "Driver", "Stint", "LapNumber"])
+        .groupby(["Year", "Round", "Driver", "Stint"], sort=False)
+    )
+    for _, g in grouped:
+        if len(g) < WINDOW:
+            continue
+        for i in range(WINDOW - 1, len(g)):
+            rows.append({
+                "Compound":    g["Compound"].iloc[i],
+                "CircuitType": "street" if is_street(g["Circuit"].iloc[i]) else "permanent",
+            })
+    return pd.DataFrame(rows)
+
+
+@torch.no_grad()
+def evaluate_breakdown(model, X: np.ndarray, y: np.ndarray, meta: pd.DataFrame, device) -> pd.DataFrame:
+    model.eval()
+    preds = model(torch.from_numpy(X).to(device)).cpu().numpy()
+    rows = []
+    for compound in COMPOUNDS:
+        mask = (meta["Compound"] == compound).values
+        if mask.sum() < 10:
+            continue
+        rows.append({
+            "Group": compound.capitalize(),
+            "N":     int(mask.sum()),
+            "MAE":   float(mean_absolute_error(y[mask], preds[mask])),
+            "RMSE":  float(np.sqrt(mean_squared_error(y[mask], preds[mask]))),
+            "R2":    float(r2_score(y[mask], preds[mask])),
+        })
+    for ct in ["street", "permanent"]:
+        mask = (meta["CircuitType"] == ct).values
+        if mask.sum() < 10:
+            continue
+        rows.append({
+            "Group": ct.capitalize(),
+            "N":     int(mask.sum()),
+            "MAE":   float(mean_absolute_error(y[mask], preds[mask])),
+            "RMSE":  float(np.sqrt(mean_squared_error(y[mask], preds[mask]))),
+            "R2":    float(r2_score(y[mask], preds[mask])),
+        })
+    return pd.DataFrame(rows).set_index("Group")
+
+
 def chronological_split(df: pd.DataFrame, val_fraction: float = 0.2):
     df = df.sort_values(["Year", "Round"]).reset_index(drop=True)
     cut = int((1 - val_fraction) * len(df))
@@ -171,9 +223,10 @@ def main():
     X_tr, y_tr, scaler = make_windows(train_df, drivers, circuits, fit_scaler=True)
     X_val, y_val, _ = make_windows(val_df, drivers, circuits, scaler=scaler)
     X_te, y_te, _ = make_windows(test_df, drivers, circuits, scaler=scaler)
+    te_meta = collect_window_meta(test_df)
 
     if X_tr is None or y_tr is None:
-        raise RuntimeError("no training windows produced; need stints with at least 5 valid laps")
+        raise RuntimeError("no training windows produced; need stints with at least 8 valid laps")
 
     print(
         f"windows -- train: {len(X_tr)}, "
@@ -211,7 +264,12 @@ def main():
 
     if test_loader is not None:
         m = evaluate(model, test_loader, device)
-        print(f"test  | MAE {m['mae']:.3f} RMSE {m['rmse']:.3f} R2 {m['r2']:.3f}")
+        print(f"\ntest (2024) — overall")
+        print(f"  MAE {m['mae']:.3f}  RMSE {m['rmse']:.3f}  R2 {m['r2']:.3f}")
+        if X_te is not None and y_te is not None:
+            print("\ntest (2024) — breakdown")
+            bd = evaluate_breakdown(model, X_te, y_te, te_meta, device)
+            print(bd.to_string(float_format=lambda x: f"{x:.3f}"))
 
 
 if __name__ == "__main__":
