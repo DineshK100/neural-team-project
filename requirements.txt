@@ -5,3 +5,4 @@ pandas>=2.2
 pyarrow>=18.0
 scikit-learn>=1.5
 matplotlib>=3.9
+xgboost>=2.0
